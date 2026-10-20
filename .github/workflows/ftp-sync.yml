@@ -12,6 +12,7 @@ on:
           - list
           - pull
           - fix-perms
+          - diagnose
       remote_dir:
         description: "서버 경로 (예: /public_html)"
         required: true
@@ -44,6 +45,25 @@ jobs:
           set net:timeout 30
           set net:max-retries 3
           EOF
+
+      - name: Diagnose
+        if: inputs.mode == 'diagnose'
+        run: |
+          check() {
+            local name="$1" value="$2"
+            local trimmed="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            echo "$name: length=${#value}, trimmed_length=${#trimmed}, has_at=$([[ "$value" == *@* ]] && echo yes || echo no)"
+          }
+          check FTP_SERVER "$FTP_SERVER"
+          check FTP_USERNAME "$FTP_USERNAME"
+          check FTP_PASSWORD "$FTP_PASSWORD"
+          check FTP_PORT "$FTP_PORT"
+          printf 'machine %s\nlogin %s\npassword %s\n' "$FTP_SERVER" "$FTP_USERNAME" "$FTP_PASSWORD" > ~/.netrc
+          chmod 600 ~/.netrc
+          echo "--- curl plain FTP ---"
+          curl -s --netrc --list-only --max-time 30 "ftp://$FTP_SERVER:${FTP_PORT:-21}/" -o /dev/null -w "result=%{response_code}\n" || true
+          echo "--- curl explicit TLS ---"
+          curl -s --netrc --ssl-reqd -k --list-only --max-time 30 "ftp://$FTP_SERVER:${FTP_PORT:-21}/" -o /dev/null -w "result=%{response_code}\n" || true
 
       - name: List
         if: inputs.mode == 'list'
