@@ -1,0 +1,78 @@
+name: FTP Tools
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "list: 폴더 목록 보기 / pull: 서버 파일을 GitHub으로 가져오기 / fix-perms: .htaccess·폴더 권한 복구"
+        required: true
+        default: list
+        type: choice
+        options:
+          - list
+          - pull
+          - fix-perms
+      remote_dir:
+        description: "서버 경로 (예: /public_html)"
+        required: true
+        default: "/"
+
+permissions:
+  contents: write
+
+jobs:
+  ftp:
+    runs-on: ubuntu-latest
+    env:
+      FTP_SERVER: ${{ secrets.FTP_SERVER }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+      FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+      FTP_PORT: ${{ secrets.FTP_PORT }}
+      REMOTE_DIR: ${{ inputs.remote_dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+
+      - name: Prepare lftp
+        run: |
+          cat > ~/.lftprc <<EOF
+          set ftp:ssl-allow true
+          set ssl:verify-certificate false
+          set ftp:passive-mode true
+          set net:timeout 30
+          set net:max-retries 3
+          EOF
+
+      - name: List
+        if: inputs.mode == 'list'
+        run: |
+          lftp -u "$FTP_USERNAME,$FTP_PASSWORD" -p "${FTP_PORT:-21}" "$FTP_SERVER" \
+            -e "pwd; cls -la '$REMOTE_DIR'; bye"
+
+      - name: Fix permissions
+        if: inputs.mode == 'fix-perms'
+        run: |
+          lftp -u "$FTP_USERNAME,$FTP_PASSWORD" -p "${FTP_PORT:-21}" "$FTP_SERVER" -e "
+            set cmd:fail-exit false;
+            chmod 755 '$REMOTE_DIR';
+            chmod 644 '$REMOTE_DIR/.htaccess';
+            cls -la '$REMOTE_DIR';
+            bye"
+
+      - name: Pull from server
+        if: inputs.mode == 'pull'
+        run: |
+          mkdir -p site
+          lftp -u "$FTP_USERNAME,$FTP_PASSWORD" -p "${FTP_PORT:-21}" "$FTP_SERVER" -e "
+            mirror --verbose --parallel=5 \
+              --exclude-glob .ftp-deploy-sync-state.json \
+              '$REMOTE_DIR' site;
+            bye"
+          find site -type f -size +95M -print -delete
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A site
+          git commit -m "Import site files from FTP ($REMOTE_DIR)" || echo "No changes"
+          git push
