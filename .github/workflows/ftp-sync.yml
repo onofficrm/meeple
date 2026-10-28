@@ -60,8 +60,14 @@ jobs:
           check FTP_PORT "$FTP_PORT"
           printf 'machine %s\nlogin %s\npassword %s\n' "$FTP_SERVER" "$FTP_USERNAME" "$FTP_PASSWORD" > ~/.netrc
           chmod 600 ~/.netrc
-          echo "--- curl plain FTP ---"
+          echo "--- resolve secret host ---"
+          getent hosts "$FTP_SERVER" || echo "secret host NXDOMAIN"
+          echo "--- curl secret host ---"
           curl -s --netrc --list-only --max-time 30 "ftp://$FTP_SERVER:${FTP_PORT:-21}/" -o /dev/null -w "result=%{response_code}\n" || true
+          echo "--- curl meeple.co.kr ---"
+          printf 'machine meeple.co.kr\nlogin %s\npassword %s\n' "$FTP_USERNAME" "$FTP_PASSWORD" > ~/.netrc
+          chmod 600 ~/.netrc
+          curl -s --netrc --list-only --max-time 30 "ftp://meeple.co.kr:21/" -w "result=%{response_code}\n" || true
           echo "--- curl explicit TLS ---"
           curl -s --netrc --ssl-reqd -k --list-only --max-time 30 "ftp://$FTP_SERVER:${FTP_PORT:-21}/" -o /dev/null -w "result=%{response_code}\n" || true
           echo "--- sftp port 22 ---"
@@ -77,8 +83,14 @@ jobs:
       - name: List
         if: inputs.mode == 'list'
         run: |
-          lftp -u "$FTP_USERNAME,$FTP_PASSWORD" -p "${FTP_PORT:-21}" "$FTP_SERVER" \
-            -e "pwd; cls -la '$REMOTE_DIR'; bye"
+          host="${FTP_SERVER}"
+          if ! getent hosts "$host" >/dev/null 2>&1; then
+            echo "Secret host does not resolve, using meeple.co.kr"
+            host="meeple.co.kr"
+          fi
+          echo "Connecting to $host"
+          lftp -u "$FTP_USERNAME,$FTP_PASSWORD" -p "${FTP_PORT:-21}" "$host" \
+            -e "pwd; cls -la; cls -la www; cls -la '$REMOTE_DIR'; bye"
 
       - name: Fix permissions
         if: inputs.mode == 'fix-perms'
